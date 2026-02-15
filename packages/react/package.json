@@ -1,0 +1,30 @@
+{
+  "name": "@mdckiller/audio-waveform-viewer-react",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "React wrapper for @mdckiller/audio-waveform-viewer.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm --prefix ../.. run build:core && tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@mdckiller/audio-waveform-viewer": "^0.1.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "typescript": "^5.9.3"
+  }
+}

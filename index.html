@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>audio-waveform-viewer demos</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        background: linear-gradient(180deg, #f7fafc 0%, #edf2f7 100%);
+        color: #1f2937;
+      }
+      main {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 32px 16px;
+      }
+      h1 {
+        margin: 0 0 8px 0;
+        font-size: 26px;
+      }
+      p {
+        margin: 0 0 20px 0;
+        line-height: 1.5;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        display: block;
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        text-decoration: none;
+        color: inherit;
+        padding: 12px;
+      }
+      .card:hover {
+        border-color: #64748b;
+      }
+      .title {
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      .meta {
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      code {
+        background: #e2e8f0;
+        padding: 1px 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>audio-waveform-viewer</h1>
+      <p>Hosted demos.</p>
+      <div class="grid">
+        <a class="card" href="./examples/multiChannel.html">
+          <div class="title">multiChannel demo</div>
+          <div class="meta">Mock streams, toolbar, zoom/pan, markers.</div>
+        </a>
+        <a class="card" href="./examples/microphoneReact.html">
+          <div class="title">microphoneReact demo</div>
+          <div class="meta">Live microphone: RAW vs ANR, mode switch waveform/rms/features.</div>
+        </a>
+      </div>
+      <p style="margin-top: 20px;" class="meta">
+        For microphone access, open via <code>https://</code> (GitHub Pages is already HTTPS).
+      </p>
+    </main>
+  </body>
+  </html>

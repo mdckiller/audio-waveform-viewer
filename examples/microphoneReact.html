@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio Waveform Viewer - Microphone (React)</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+        background: #f4f7fb;
+        color: #1f2937;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+      .shell {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #cfd8e3;
+        background: #ffffff;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      .toolbar label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .toolbar button,
+      .toolbar select {
+        font: inherit;
+      }
+      .toolbar button {
+        padding: 4px 10px;
+        border: 1px solid #97a6bb;
+        background: #f8fafc;
+        cursor: pointer;
+      }
+      .toolbar button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      .status {
+        font-size: 12px;
+        opacity: 0.8;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: min(420px, 40vw);
+        flex: 0 1 auto;
+      }
+      .viewer-host {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+      }
+      .hint {
+        margin-left: auto;
+        font-size: 11px;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@19.2.0",
+          "react/jsx-runtime": "https://esm.sh/react@19.2.0/jsx-runtime",
+          "react-dom/client": "https://esm.sh/react-dom@19.2.0/client",
+          "@mdckiller/audio-waveform-viewer": "../dist/src/index.js",
+          "@mdckiller/audio-waveform-viewer-react": "../packages/react/dist/index.js"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+      import { createRoot } from "react-dom/client";
+      import { AudioWaveform } from "@mdckiller/audio-waveform-viewer-react";
+
+      const h = React.createElement;
+
+      const RAW_CHANNEL_ID = "MIC_RAW";
+      const ANR_CHANNEL_ID = "MIC_ANR";
+      const TIME_WINDOW_MS = 8000;
+      const getDefaultYWindow = (mode) => (mode === "features" ? 1 : 2);
+
+      const RAW_CONSTRAINTS = {
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      };
+
+      const ANR_CONSTRAINTS = {
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      };
+
+      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      const formatError = (error) => {
+        if (error instanceof Error) {
+          return error.message;
+        }
+        return String(error);
+      };
+
+      const createAudioPipeline = ({
+        stream,
+        viewer,
+        channelId,
+        channelLabel,
+        statusSink,
+        timingModel
+      }) => {
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextCtor) {
+          throw new Error("AudioContext is not supported in this browser");
+        }
+
+        const context = new AudioContextCtor();
+        const source = context.createMediaStreamSource(stream);
+        if (typeof context.createScriptProcessor !== "function") {
+          throw new Error("ScriptProcessorNode is not supported in this browser");
+        }
+        const processor = context.createScriptProcessor(1024, 1, 1);
+        const sink = context.createMediaStreamDestination();
+
+        const sampleRate = context.sampleRate;
+        const waveformBucketSamples = Math.max(1, Math.round(sampleRate * 0.005));
+        const rmsWindowSamples = Math.max(1, Math.round(sampleRate * 0.02));
+        const levelGain = 4;
+
+        let processedSamples = 0;
+        let bucketSum = 0;
+        let bucketAbsSum = 0;
+        let bucketCount = 0;
+        let bucketStartClockMs = 0;
+        let sumSquares = 0;
+        const rmsWindow = [];
+        let lastTimestampMs = -1;
+
+        const computeZcr = () => {
+          if (rmsWindow.length < 2) {
+            return 0;
+          }
+          let crossings = 0;
+          for (let i = 1; i < rmsWindow.length; i += 1) {
+            const prev = rmsWindow[i - 1];
+            const curr = rmsWindow[i];
+            if ((prev <= 0 && curr > 0) || (prev >= 0 && curr < 0)) {
+              crossings += 1;
+            }
+          }
+          return crossings / (rmsWindow.length - 1);
+        };
+
+        processor.onaudioprocess = (event) => {
+          const input = event.inputBuffer.getChannelData(0);
+          const packetDurationMs = (input.length * 1000) / sampleRate;
+          const packetEndMs = performance.now() - timingModel.sessionStartPerfMs;
+          const packetStartMs = packetEndMs - packetDurationMs;
+
+          for (let i = 0; i < input.length; i += 1) {
+            const sample = clamp(input[i], -1, 1);
+            const sampleClockMs = packetStartMs + (i * 1000) / sampleRate;
+            if (bucketCount === 0) {
+              bucketStartClockMs = sampleClockMs;
+            }
+
+            bucketSum += sample;
+            bucketAbsSum += Math.abs(sample);
+            bucketCount += 1;
+
+            rmsWindow.push(sample);
+            sumSquares += sample * sample;
+            if (rmsWindow.length > rmsWindowSamples) {
+              const removed = rmsWindow.shift();
+              sumSquares -= removed * removed;
+            }
+
+            if (bucketCount >= waveformBucketSamples) {
+              const waveformMeanSigned = bucketSum / bucketCount;
+              const waveformAbs = bucketAbsSum / bucketCount;
+              const waveformValue = waveformAbs * levelGain;
+              const rmsRaw = Math.sqrt(sumSquares / Math.max(1, rmsWindow.length));
+              const rms = rmsRaw * levelGain;
+              const featureValue = computeZcr();
+              let rawTimestampMs = Math.max(0, bucketStartClockMs);
+              if (timingModel.globalFirstBucketMs === null) {
+                timingModel.globalFirstBucketMs = rawTimestampMs;
+              }
+              if (!timingModel.channelOffsetMs.has(channelId)) {
+                timingModel.channelOffsetMs.set(
+                  channelId,
+                  rawTimestampMs - timingModel.globalFirstBucketMs
+                );
+              }
+              const channelOffsetMs = timingModel.channelOffsetMs.get(channelId);
+              rawTimestampMs = Math.max(0, rawTimestampMs - channelOffsetMs);
+              const timestamp = Math.max(lastTimestampMs + 1, Math.round(rawTimestampMs));
+              lastTimestampMs = timestamp;
+
+              viewer.addDataPoint(channelId, {
+                timestamp,
+                value: waveformValue,
+                rms,
+                featureValue,
+                metadata: {
+                  channel: channelLabel,
+                  waveformMeanSigned,
+                  waveformAbs,
+                  waveformBucketMs: 5,
+                  rmsWindowMs: 20,
+                  levelGain
+                }
+              });
+
+              bucketSum = 0;
+              bucketAbsSum = 0;
+              bucketCount = 0;
+            }
+          }
+          processedSamples += input.length;
+        };
+
+        source.connect(processor);
+        processor.connect(sink);
+
+        const ensureContextRunning = async () => {
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            if (context.state === "running") {
+              return;
+            }
+            await context.resume();
+            if (context.state === "running") {
+              return;
+            }
+            await sleep(25);
+          }
+          throw new Error(`AudioContext did not enter running state (${channelLabel})`);
+        };
+
+        const start = async () => {
+          await ensureContextRunning();
+        };
+
+        const stop = async () => {
+          processor.onaudioprocess = null;
+          try {
+            source.disconnect();
+            processor.disconnect();
+            sink.disconnect();
+          } catch (_error) {
+            // ignore disconnect errors on repeated teardown
+          }
+          stream.getTracks().forEach((track) => track.stop());
+          await context.close();
+        };
+
+        statusSink(`Pipeline ready: ${channelLabel} @ ${sampleRate} Hz`);
+        return { start, stop };
+      };
+
+      const createMicrophoneSession = async (viewer, statusSink) => {
+        const timingModel = {
+          sessionStartPerfMs: performance.now(),
+          globalFirstBucketMs: null,
+          channelOffsetMs: new Map()
+        };
+        const rawStream = await navigator.mediaDevices.getUserMedia(RAW_CONSTRAINTS);
+        let anrStream = null;
+        let anrFallback = false;
+
+        try {
+          anrStream = await navigator.mediaDevices.getUserMedia(ANR_CONSTRAINTS);
+        } catch (_error) {
+          anrFallback = true;
+          anrStream = rawStream.clone();
+        }
+
+        const pipelines = [
+          createAudioPipeline({
+            stream: rawStream,
+            viewer,
+            channelId: RAW_CHANNEL_ID,
+            channelLabel: "RAW",
+            statusSink,
+            timingModel
+          }),
+          createAudioPipeline({
+            stream: anrStream,
+            viewer,
+            channelId: ANR_CHANNEL_ID,
+            channelLabel: anrFallback ? "ANR (fallback clone)" : "ANR",
+            statusSink,
+            timingModel
+          })
+        ];
+
+        await Promise.all(pipelines.map((pipeline) => pipeline.start()));
+        if (anrFallback) {
+          statusSink("Running: RAW + ANR fallback (second getUserMedia unavailable)");
+        } else {
+          statusSink("Running: RAW + ANR");
+        }
+
+        return {
+          stop: async () => {
+            await Promise.all(
+              pipelines.map((pipeline) =>
+                pipeline.stop().catch(() => {
+                  // keep teardown resilient
+                })
+              )
+            );
+          }
+        };
+      };
+
+      const MicReactDemo = () => {
+        const waveformRef = useRef(null);
+        const stopSessionRef = useRef(null);
+
+        const [running, setRunning] = useState(false);
+        const [status, setStatus] = useState("Idle");
+        const [viewMode, setViewMode] = useState("waveform");
+        const [liveMode, setLiveMode] = useState(true);
+
+        const channels = useMemo(
+          () => [
+            {
+              id: RAW_CHANNEL_ID,
+              config: {
+                name: "MIC RAW",
+                color: "#3b82f6",
+                alpha: 1,
+                lineWidth: 2,
+                lineStyle: "solid",
+                visible: true,
+                zIndex: 1
+              }
+            },
+            {
+              id: ANR_CHANNEL_ID,
+              config: {
+                name: "MIC ANR",
+                color: "#ef4444",
+                alpha: 0.95,
+                lineWidth: 2,
+                lineStyle: "solid",
+                visible: true,
+                zIndex: 2
+              }
+            }
+          ],
+          []
+        );
+
+        const viewerConfig = useMemo(() => {
+          const targetYWindow = getDefaultYWindow(viewMode);
+          return {
+            timeWindow: TIME_WINDOW_MS,
+            yWindow: targetYWindow,
+            axisPos: { x: 0, y: 0 },
+            liveMode,
+            viewMode,
+            enableCursorGuide: true,
+            channelToolbar: {
+              enabled: true,
+              position: "top",
+              thicknessPx: 36
+            }
+          };
+        }, [liveMode, viewMode]);
+
+        const stopCapture = useCallback(async () => {
+          const stopFn = stopSessionRef.current;
+          stopSessionRef.current = null;
+          if (stopFn) {
+            await stopFn();
+          }
+          setRunning(false);
+          setStatus("Stopped");
+        }, []);
+
+        const startCapture = useCallback(async () => {
+          if (running) {
+            return;
+          }
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            setStatus("getUserMedia is not available in this browser");
+            return;
+          }
+
+          const viewer = waveformRef.current?.getViewer?.();
+          if (!viewer) {
+            setStatus("Viewer not ready");
+            return;
+          }
+
+          await stopCapture();
+
+          viewer.setLiveMode(false);
+          viewer.clear();
+          viewer.setTimeWindow(TIME_WINDOW_MS);
+          viewer.setYWindow(getDefaultYWindow(viewMode));
+          viewer.setAxisPos({ x: 0, y: 0 });
+          viewer.setViewMode(viewMode);
+          viewer.setLiveMode(liveMode);
+
+          setStatus("Requesting microphone...");
+          try {
+            const session = await createMicrophoneSession(viewer, setStatus);
+            stopSessionRef.current = session.stop;
+            setRunning(true);
+          } catch (error) {
+            setStatus(`Error: ${formatError(error)}`);
+            await stopCapture();
+          }
+        }, [running, stopCapture, viewMode, liveMode]);
+
+        useEffect(() => {
+          const viewer = waveformRef.current?.getViewer?.();
+          if (!viewer) {
+            return;
+          }
+          viewer.setViewMode(viewMode);
+          viewer.setYWindow(getDefaultYWindow(viewMode));
+          viewer.setAxisPos({ x: 0, y: 0 });
+        }, [viewMode]);
+
+        useEffect(() => {
+          const viewer = waveformRef.current?.getViewer?.();
+          if (!viewer) {
+            return;
+          }
+          viewer.setLiveMode(liveMode);
+        }, [liveMode]);
+
+        useEffect(() => {
+          return () => {
+            stopCapture().catch(() => {
+              // ignore unmount teardown errors
+            });
+          };
+        }, [stopCapture]);
+
+        return h(
+          "div",
+          { className: "shell" },
+          h(
+            "div",
+            { className: "toolbar" },
+            h(
+              "button",
+              { onClick: startCapture, disabled: running },
+              "Start"
+            ),
+            h(
+              "button",
+              { onClick: () => stopCapture(), disabled: !running },
+              "Stop"
+            ),
+            h(
+              "label",
+              null,
+              h("input", {
+                type: "checkbox",
+                checked: liveMode,
+                onChange: (event) => setLiveMode(Boolean(event.target.checked))
+              }),
+              "Live mode"
+            ),
+            h(
+              "label",
+              null,
+              "Mode",
+              h(
+                "select",
+                {
+                  value: viewMode,
+                  onChange: (event) => setViewMode(event.target.value)
+                },
+                h("option", { value: "waveform" }, "waveform"),
+                h("option", { value: "rms" }, "rms"),
+                h("option", { value: "features" }, "features")
+              )
+            ),
+            h("div", { className: "status" }, status),
+            h("div", { className: "hint" }, "Run on https:// or localhost for microphone access")
+          ),
+          h(
+            "div",
+            { className: "viewer-host" },
+            h(AudioWaveform, {
+              ref: waveformRef,
+              config: viewerConfig,
+              channels,
+              style: { width: "100%", height: "100%" }
+            })
+          )
+        );
+      };
+
+      createRoot(document.getElementById("app")).render(h(MicReactDemo));
+    </script>
+  </body>
+</html>

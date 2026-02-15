@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio Waveform Viewer - Multi Channel</title>
+  </head>
+  <body style="font-family: monospace; margin: 16px;">
+    <div style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <label>
+        Mock:
+        <select id="mockSelect">
+          <option value="sine-8s">sine-8s</option>
+          <option value="sine-8s-stop-2s">sine-8s-stop-2s</option>
+          <option value="sine-2ch-offset-2s">sine-2ch-offset-2s</option>
+          <option value="sine-2ch-arrival-delay-1s">sine-2ch-arrival-delay-1s</option>
+          <option value="sine-8s-color-markers">sine-8s-color-markers</option>
+        </select>
+      </label>
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <label style="display: flex; align-items: center; gap: 6px;">
+        <input id="liveMode" type="checkbox" checked />
+        Live mode
+      </label>
+      <label style="display: flex; align-items: center; gap: 6px;">
+        <input id="preserveHiddenTabToggle" type="checkbox" />
+        Preserve hidden-tab continuity
+      </label>
+      <label>
+        timeWindow (ms)
+        <input id="timeWindowInput" type="number" min="1" step="100" value="8000" style="width: 90px;" />
+      </label>
+      <label>
+        yWindow
+        <input id="yWindowInput" type="number" min="0.000001" step="0.1" value="2" style="width: 90px;" />
+      </label>
+      <label>
+        axisPos X (px)
+        <input id="axisXInput" type="number" step="1" value="0" style="width: 70px;" />
+      </label>
+      <label>
+        axisPos Y (px)
+        <input id="axisYInput" type="number" step="1" value="0" style="width: 70px;" />
+      </label>
+      <label>
+        size W (px)
+        <input id="sizeWidthInput" type="number" min="50" step="10" value="1000" style="width: 80px;" />
+      </label>
+      <label>
+        size H (px)
+        <input id="sizeHeightInput" type="number" min="50" step="10" value="420" style="width: 80px;" />
+      </label>
+      <label style="display: flex; align-items: center; gap: 6px;">
+        <input id="toolbarEnabledInput" type="checkbox" checked />
+        Channel toolbar
+      </label>
+      <label>
+        toolbar pos
+        <select id="toolbarPositionInput">
+          <option value="top">top</option>
+          <option value="bottom">bottom</option>
+          <option value="left">left</option>
+          <option value="right">right</option>
+        </select>
+      </label>
+      <label>
+        toolbar px
+        <input id="toolbarThicknessInput" type="number" min="0" step="1" value="40" style="width: 70px;" />
+      </label>
+      <button id="applyViewBtn">Apply View</button>
+      <button id="applyToolbarBtn">Apply Toolbar</button>
+      <button id="applySizeBtn">Apply Size</button>
+      <button id="autoSizeBtn">AutoSize</button>
+      <button id="resetViewBtn">Reset View</button>
+      <button id="addDynChannelBtn">Add Channel</button>
+      <button id="removeDynChannelBtn">Remove Channel</button>
+    </div>
+
+    <div id="channelControls" style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap;"></div>
+
+    <div style="display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;">
+      <div
+        id="viewerShell"
+        style="width: 1000px; height: 420px; resize: both; overflow: auto; border: 3px solid #2d3748; padding: 12px; background: linear-gradient(180deg, #f5f7fa, #edf2f7);"
+      >
+        <div id="viewer" style="width: 100%; height: 100%;"></div>
+      </div>
+
+      <div style="min-width: 300px; border: 1px solid #cbd5e0; padding: 10px; background: #ffffff;">
+        <div><strong>View state</strong></div>
+        <div id="viewReason"></div>
+        <div id="timeWindowInfo"></div>
+        <div id="yWindowInfo"></div>
+        <div id="axisPosInfo"></div>
+        <div id="visibleTimeInfo"></div>
+        <div id="visibleYInfo"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { AudioWaveformViewer } from "../dist/src/index.js";
+      import { Sine8sMockWebSocket } from "../dist/mock/websocketMockSine.js";
+      import { Sine8sStop2sMockWebSocket } from "../dist/mock/websocketMockSineStop2s.js";
+      import { Sine2chOffset2sMockWebSocket } from "../dist/mock/websocketMockSine2chOffset2s.js";
+      import { Sine2chArrivalDelay1sMockWebSocket } from "../dist/mock/websocketMockSine2chArrivalDelay1s.js";
+      import { Sine8sColorSwitchMarkersMockWebSocket } from "../dist/mock/websocketMockSineColorSwitchMarkers.js";
+
+      const container = document.getElementById("viewer");
+      const viewerShell = document.getElementById("viewerShell");
+      let viewer = null;
+      let socket = null;
+      let running = false;
+      let dynamicChannelCounter = 1;
+      const dynamicChannelIds = [];
+      const channelControlMap = new Map();
+      window.viewer = null;
+      window.viewEvents = [];
+      window.mockTrace = [];
+      window.currentSocket = null;
+
+      const MOCKS = {
+        "sine-8s": {
+          createSocket: () => new Sine8sMockWebSocket(),
+          channels: [
+            { id: "SINE", name: "SINE", color: "#1A73E8", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 1 }
+          ]
+        },
+        "sine-8s-stop-2s": {
+          createSocket: () => new Sine8sStop2sMockWebSocket(),
+          channels: [
+            { id: "SINE", name: "SINE", color: "#1A73E8", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 1 }
+          ]
+        },
+        "sine-2ch-offset-2s": {
+          createSocket: () => new Sine2chOffset2sMockWebSocket(),
+          channels: [
+            { id: "SINE_BLUE", name: "SINE BLUE", color: "#1A73E8", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 1 },
+            { id: "SINE_RED", name: "SINE RED", color: "#E53E3E", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 2 }
+          ]
+        },
+        "sine-2ch-arrival-delay-1s": {
+          createSocket: () => new Sine2chArrivalDelay1sMockWebSocket(),
+          channels: [
+            { id: "SINE_A", name: "SINE A", color: "#1A73E8", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 1 },
+            { id: "SINE_B", name: "SINE B", color: "#E53E3E", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 2 }
+          ]
+        },
+        "sine-8s-color-markers": {
+          createSocket: () => new Sine8sColorSwitchMarkersMockWebSocket(),
+          channels: [
+            { id: "SINE", name: "SINE", color: "#1A73E8", alpha: 0.95, lineWidth: 2, lineStyle: "solid", visible: true, zIndex: 1 }
+          ]
+        }
+      };
+
+      const startBtn = document.getElementById("startBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const mockSelect = document.getElementById("mockSelect");
+      const channelControls = document.getElementById("channelControls");
+      const liveModeToggle = document.getElementById("liveMode");
+      const preserveHiddenTabToggle = document.getElementById("preserveHiddenTabToggle");
+      const timeWindowInput = document.getElementById("timeWindowInput");
+      const yWindowInput = document.getElementById("yWindowInput");
+      const axisXInput = document.getElementById("axisXInput");
+      const axisYInput = document.getElementById("axisYInput");
+      const sizeWidthInput = document.getElementById("sizeWidthInput");
+      const sizeHeightInput = document.getElementById("sizeHeightInput");
+      const toolbarEnabledInput = document.getElementById("toolbarEnabledInput");
+      const toolbarPositionInput = document.getElementById("toolbarPositionInput");
+      const toolbarThicknessInput = document.getElementById("toolbarThicknessInput");
+      const applyViewBtn = document.getElementById("applyViewBtn");
+      const applyToolbarBtn = document.getElementById("applyToolbarBtn");
+      const applySizeBtn = document.getElementById("applySizeBtn");
+      const autoSizeBtn = document.getElementById("autoSizeBtn");
+      const resetViewBtn = document.getElementById("resetViewBtn");
+      const addDynChannelBtn = document.getElementById("addDynChannelBtn");
+      const removeDynChannelBtn = document.getElementById("removeDynChannelBtn");
+
+      const viewReason = document.getElementById("viewReason");
+      const timeWindowInfo = document.getElementById("timeWindowInfo");
+      const yWindowInfo = document.getElementById("yWindowInfo");
+      const axisPosInfo = document.getElementById("axisPosInfo");
+      const visibleTimeInfo = document.getElementById("visibleTimeInfo");
+      const visibleYInfo = document.getElementById("visibleYInfo");
+
+      const syncSizeInputs = () => {
+        const width = Math.round(container.clientWidth);
+        const height = Math.round(container.clientHeight);
+        if (width > 0) {
+          sizeWidthInput.value = String(width);
+        }
+        if (height > 0) {
+          sizeHeightInput.value = String(height);
+        }
+      };
+
+      const addChannelControl = (channelId, channelName, visible) => {
+        const wrapper = document.createElement("label");
+        wrapper.style.display = "flex";
+        wrapper.style.alignItems = "center";
+        wrapper.style.gap = "6px";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = visible;
+        checkbox.addEventListener("change", () => {
+          if (!viewer) {
+            return;
+          }
+          viewer.setChannelVisibility(channelId, checkbox.checked);
+        });
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(document.createTextNode(channelName));
+        channelControls.appendChild(wrapper);
+        channelControlMap.set(channelId, { wrapper, checkbox });
+      };
+
+      const removeChannelControl = (channelId) => {
+        const entry = channelControlMap.get(channelId);
+        if (!entry) {
+          return;
+        }
+        entry.wrapper.remove();
+        channelControlMap.delete(channelId);
+      };
+
+      const clearChannelControls = () => {
+        channelControls.innerHTML = "";
+        channelControlMap.clear();
+      };
+
+      const nextDynamicColor = () => {
+        const palette = ["#00ACC1", "#F59E0B", "#EF4444", "#22C55E", "#6366F1", "#A855F7", "#14B8A6"];
+        return palette[(dynamicChannelCounter - 1) % palette.length];
+      };
+
+      const updateViewInfo = (payload) => {
+        const state = payload ?? viewer?.getViewState();
+        if (!state) {
+          viewReason.textContent = "";
+          timeWindowInfo.textContent = "";
+          yWindowInfo.textContent = "";
+          axisPosInfo.textContent = "";
+          visibleTimeInfo.textContent = "";
+          visibleYInfo.textContent = "";
+          syncSizeInputs();
+          return;
+        }
+
+        if (payload && payload.reason !== undefined) {
+          viewReason.textContent = `reason: ${payload.reason}`;
+        }
+        timeWindowInfo.textContent = `timeWindow: ${state.timeWindow.toFixed(2)} ms`;
+        yWindowInfo.textContent = `yWindow: ${state.yWindow.toFixed(4)}`;
+        axisPosInfo.textContent = `axisPos: x=${state.axisPos.x.toFixed(2)} px, y=${state.axisPos.y.toFixed(2)} px`;
+        visibleTimeInfo.textContent = `visibleTimeMs: [${state.visibleTimeMs[0].toFixed(2)}, ${state.visibleTimeMs[1].toFixed(2)}]`;
+        visibleYInfo.textContent = `visibleY: [${state.visibleY[0].toFixed(4)}, ${state.visibleY[1].toFixed(4)}]`;
+        if (!payload || payload.reason === "resize" || payload.reason === "init") {
+          syncSizeInputs();
+        }
+      };
+
+      const performHardResetView = () => {
+        if (!viewer) {
+          return;
+        }
+        viewer.setLiveMode(false);
+        viewer.resetView();
+        const afterReset = viewer.getViewState();
+        if (Math.abs(afterReset.axisPos.x) > 1e-9) {
+          viewer.setAxisPos({ x: 0, y: afterReset.axisPos.y });
+        }
+        viewer.setLiveMode(true);
+        liveModeToggle.checked = true;
+        axisXInput.value = "0.00";
+        updateViewInfo();
+      };
+
+      const cleanup = () => {
+        running = false;
+        dynamicChannelIds.length = 0;
+        dynamicChannelCounter = 1;
+        if (socket) {
+          socket.stop();
+          socket = null;
+          window.currentSocket = null;
+        }
+        if (viewer) {
+          viewer.destroy();
+          viewer = null;
+          window.viewer = null;
+        }
+        container.innerHTML = "";
+        clearChannelControls();
+        stopBtn.disabled = true;
+        startBtn.disabled = false;
+        mockSelect.disabled = false;
+        updateViewInfo(null);
+      };
+
+      startBtn.addEventListener("click", () => {
+        if (viewer) {
+          return;
+        }
+
+        const mockId = mockSelect.value;
+        const mockDef = MOCKS[mockId] ?? MOCKS["sine-8s"];
+        window.viewEvents = [];
+        window.mockTrace = [];
+
+        viewer = new AudioWaveformViewer(container, {
+          timeWindow: Number(timeWindowInput.value),
+          yWindow: Number(yWindowInput.value),
+          axisPos: { x: Number(axisXInput.value), y: Number(axisYInput.value) },
+          channelToolbar: {
+            enabled: toolbarEnabledInput.checked,
+            position: toolbarPositionInput.value,
+            thicknessPx: Number(toolbarThicknessInput.value)
+          },
+          liveMode: liveModeToggle.checked,
+          preserveContinuityOnHiddenTab: preserveHiddenTabToggle.checked,
+          onViewChange: (view) => {
+            window.viewEvents.push(view);
+            updateViewInfo(view);
+            if (view.reason !== "liveTick") {
+              timeWindowInput.value = view.timeWindow.toFixed(2);
+              yWindowInput.value = view.yWindow.toFixed(4);
+              axisXInput.value = view.axisPos.x.toFixed(2);
+              axisYInput.value = view.axisPos.y.toFixed(2);
+            }
+            channelControlMap.forEach((entry, channelId) => {
+              const channel = viewer?.channels?.get(channelId);
+              if (!channel) {
+                return;
+              }
+              entry.checkbox.checked = channel.getConfig().visible;
+            });
+          }
+        });
+
+        window.viewer = viewer;
+
+        mockDef.channels.forEach((channelConfig) => {
+          viewer.addChannel(channelConfig.id, {
+            name: channelConfig.name,
+            color: channelConfig.color,
+            alpha: channelConfig.alpha,
+            lineWidth: channelConfig.lineWidth,
+            lineStyle: channelConfig.lineStyle,
+            visible: channelConfig.visible,
+            zIndex: channelConfig.zIndex
+          });
+        });
+
+        clearChannelControls();
+        mockDef.channels.forEach((channelConfig) => {
+          addChannelControl(channelConfig.id, channelConfig.name, channelConfig.visible);
+        });
+
+        socket = mockDef.createSocket();
+        window.currentSocket = socket;
+
+        socket.addEventListener("data", (event) => {
+          if (!running || !viewer) {
+            return;
+          }
+          window.mockTrace.push({
+            channelId: event.detail.channelId,
+            timestamp: event.detail.point.timestamp,
+            value: event.detail.point.value,
+            color: event.detail.point.color,
+            elapsedMs: event.detail.point.metadata?.elapsedMs,
+            receivedAt: performance.now()
+          });
+          if (window.mockTrace.length > 20000) {
+            window.mockTrace.shift();
+          }
+          viewer.addDataPoint(event.detail.channelId, event.detail.point);
+        });
+
+        socket.addEventListener("marker", (event) => {
+          if (!running || !viewer) {
+            return;
+          }
+          if (!event.detail?.marker) {
+            return;
+          }
+          window.mockTrace.push({
+            marker: true,
+            timestamp: event.detail.marker.timestamp,
+            label: event.detail.marker.label,
+            receivedAt: performance.now()
+          });
+          if (window.mockTrace.length > 20000) {
+            window.mockTrace.shift();
+          }
+          viewer.addMarker(event.detail.marker);
+        });
+
+        performHardResetView();
+        socket.start();
+        running = true;
+        stopBtn.disabled = false;
+        startBtn.disabled = true;
+        mockSelect.disabled = true;
+        syncSizeInputs();
+        updateViewInfo(viewer.getViewState());
+      });
+
+      liveModeToggle.addEventListener("change", () => {
+        if (!viewer) {
+          return;
+        }
+        viewer.setLiveMode(liveModeToggle.checked);
+      });
+
+      preserveHiddenTabToggle.addEventListener("change", () => {
+        if (!viewer) {
+          return;
+        }
+        viewer.setPreserveContinuityOnHiddenTab(preserveHiddenTabToggle.checked);
+      });
+
+      applyViewBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        const targetTimeWindow = Number(timeWindowInput.value);
+        const targetYWindow = Number(yWindowInput.value);
+        const targetAxisX = Number(axisXInput.value);
+        const targetAxisY = Number(axisYInput.value);
+        viewer.setTimeWindow(targetTimeWindow);
+        viewer.setYWindow(targetYWindow);
+        viewer.setAxisPos({ x: targetAxisX, y: targetAxisY });
+        updateViewInfo();
+      });
+
+      applyToolbarBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        viewer.setChannelToolbar({
+          enabled: toolbarEnabledInput.checked,
+          position: toolbarPositionInput.value,
+          thicknessPx: Number(toolbarThicknessInput.value)
+        });
+      });
+
+      applySizeBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        const targetWidth = Number(sizeWidthInput.value);
+        const targetHeight = Number(sizeHeightInput.value);
+        if (!Number.isFinite(targetWidth) || !Number.isFinite(targetHeight) || targetWidth <= 0 || targetHeight <= 0) {
+          return;
+        }
+        viewer.setSize(targetWidth, targetHeight);
+        viewerShell.style.width = `${Math.round(targetWidth)}px`;
+        viewerShell.style.height = `${Math.round(targetHeight)}px`;
+        updateViewInfo();
+      });
+
+      autoSizeBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        viewer.setAutoSize("100%", "100%");
+        updateViewInfo();
+      });
+
+      resetViewBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        performHardResetView();
+      });
+
+      addDynChannelBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        const channelId = `EXTRA_${dynamicChannelCounter}`;
+        const channelName = `EXTRA ${dynamicChannelCounter}`;
+        const color = nextDynamicColor();
+        dynamicChannelCounter += 1;
+        dynamicChannelIds.push(channelId);
+        viewer.addChannel(channelId, {
+          name: channelName,
+          color,
+          alpha: 0.95,
+          lineWidth: 2,
+          lineStyle: "solid",
+          visible: true,
+          zIndex: 5
+        });
+        addChannelControl(channelId, channelName, true);
+      });
+
+      removeDynChannelBtn.addEventListener("click", () => {
+        if (!viewer) {
+          return;
+        }
+        const channelId = dynamicChannelIds.pop();
+        if (!channelId) {
+          return;
+        }
+        viewer.removeChannel(channelId);
+        removeChannelControl(channelId);
+      });
+
+      stopBtn.addEventListener("click", () => {
+        cleanup();
+      });
+    </script>
+  </body>
+</html>

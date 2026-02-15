@@ -1,0 +1,43 @@
+{
+  "name": "@mdckiller/audio-waveform-viewer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "WebGL real-time audio waveform viewer with explicit timeWindow/yWindow model.",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./types": {
+      "types": "./dist/src/types.d.ts",
+      "import": "./dist/src/types.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "webgl",
+    "waveform",
+    "audio",
+    "realtime",
+    "plotter"
+  ],
+  "scripts": {
+    "build:core": "tsc -p tsconfig.json",
+    "build:react": "tsc -p packages/react/tsconfig.json",
+    "build": "npm run build:core && npm run build:react",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/react": "^19.1.8",
+    "@types/node": "^25.2.2",
+    "react": "^19.1.1",
+    "typescript": "^5.9.3"
+  }
+}
