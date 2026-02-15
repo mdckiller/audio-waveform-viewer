@@ -11,6 +11,7 @@
   <a href="#features">Features</a> &middot;
   <a href="#installation">Installation</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
+  <a href="https://mdckiller.github.io/audio-waveform-viewer/">Live Demo</a> &middot;
   <a href="#react">React</a> &middot;
   <a href="#api">API</a> &middot;
   <a href="#license">License</a>
@@ -244,25 +245,14 @@ npm run build:react
 
 ## Demo
 
-Open `examples/multiChannel.html` after building to run the interactive demo with built-in mock data sources:
+Live demo index:
 
-| Mock | Description |
-|---|---|
-| `sine-8s` | Single sine wave, 8 s period |
-| `sine-8s-stop-2s` | Stream pauses every 2 s, then resumes |
-| `sine-2ch-offset-2s` | Two channels, red channel starts with 2 s delay |
-| `sine-2ch-arrival-delay-1s` | Two channels with same absolute timestamps; second channel arrives 1 s later and has slightly lower amplitude |
-| `sine-8s-color-markers` | Color changes mid-stream + periodic markers |
+- `https://mdckiller.github.io/audio-waveform-viewer/`
 
-Also available:
+Local demo files:
 
+- `examples/multiChannel.html`
 - `examples/microphoneReact.html`
-  - React + wrapper demo
-  - live microphone capture with 2 channels: `MIC RAW` and `MIC ANR` (browser DSP via `noiseSuppression/echoCancellation`)
-  - runtime switch for `waveform / rms / features` + `live mode`
-  - waveform and RMS are normalized to `0..1` (bucketed waveform + RMS 20 ms window)
-  - features mode maps to zero-crossing-rate (`0..1`)
-  - note: microphone access requires `https://` or `localhost`
 
 ### GitHub Pages
 

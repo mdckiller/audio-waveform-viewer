@@ -55,6 +55,19 @@
         font-size: 12px;
         opacity: 0.8;
       }
+      .desc {
+        margin-top: 10px;
+        font-size: 12px;
+        line-height: 1.5;
+        opacity: 0.92;
+      }
+      .desc ul {
+        margin: 6px 0 0 16px;
+        padding: 0;
+      }
+      .desc li {
+        margin: 3px 0;
+      }
       code {
         background: #e2e8f0;
         padding: 1px 4px;
@@ -69,10 +82,29 @@
         <a class="card" href="./examples/multiChannel.html">
           <div class="title">multiChannel demo</div>
           <div class="meta">Mock streams, toolbar, zoom/pan, markers.</div>
+          <div class="desc">
+            Includes built-in mocks:
+            <ul>
+              <li><code>sine-8s</code></li>
+              <li><code>sine-8s-stop-2s</code></li>
+              <li><code>sine-2ch-offset-2s</code></li>
+              <li><code>sine-2ch-arrival-delay-1s</code> (same timestamp, delayed delivery)</li>
+              <li><code>sine-8s-color-markers</code></li>
+            </ul>
+          </div>
         </a>
         <a class="card" href="./examples/microphoneReact.html">
           <div class="title">microphoneReact demo</div>
           <div class="meta">Live microphone: RAW vs ANR, mode switch waveform/rms/features.</div>
+          <div class="desc">
+            React + wrapper demo with:
+            <ul>
+              <li>Start/Stop capture</li>
+              <li>Live mode toggle</li>
+              <li>View mode switch: waveform / rms / features</li>
+              <li>Two channels: <code>MIC RAW</code> and <code>MIC ANR</code> (browser DSP)</li>
+            </ul>
+          </div>
         </a>
       </div>
       <p style="margin-top: 20px;" class="meta">
